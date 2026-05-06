@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "seed": "npm --prefix server run seed"
+    "seed": "npm --prefix server run build && npm --prefix server run seed"
   },
   "dependencies": {
     "react": "^18.3.1",

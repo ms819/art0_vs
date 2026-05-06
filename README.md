@@ -383,7 +383,7 @@ Notes:
 
 - Service Type: `Web Service`
 - Root Directory: `server`
-- Build Command: `npm install --include=dev && npm run build`
+- Build Command: `npm install --include=dev && npm rebuild sqlite3 --build-from-source && npm run build`
 - Start Command: `npm start`
 
 Environment Variables:
@@ -411,7 +411,7 @@ Notes:
 - Card seed is executed at startup by the server.
 - You can also run the seed manually:
   - repository root: `npm run seed`
-  - backend directory: `cd server && npm run seed`
+  - backend directory: `cd server && npm run build && npm run seed`
 
 If you use Render with SQLite, attach a persistent disk. Without a persistent disk, the DB file can be lost on redeploy or restart.
 
@@ -422,7 +422,7 @@ If you use Render with SQLite, attach a persistent disk. Without a persistent di
 1. In Render, create `New Web Service`.
 2. Connect the GitHub repository.
 3. Set `Root Directory` to `server`.
-4. Set `Build Command` to `npm install --include=dev && npm run build`.
+4. Set `Build Command` to `npm install --include=dev && npm rebuild sqlite3 --build-from-source && npm run build`.
 5. Set `Start Command` to `npm start`.
 6. Add environment variables:
    - `NODE_ENV=production`
