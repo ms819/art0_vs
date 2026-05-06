@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: battle-spirits-online-api
+    env: node
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        sync: false
+      - key: DB_PATH
+        value: /var/data/bspo.db
+      - key: DEBUG_GAME
+        value: false
+      - key: DEBUG_NO_SHUFFLE
+        value: false
+
+  - type: static_site
+    name: battle-spirits-online-client
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
+      - key: VITE_WS_URL
+        sync: false
+      - key: VITE_DEBUG_GAME
+        value: false
