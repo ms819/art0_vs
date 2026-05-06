@@ -383,7 +383,7 @@ Notes:
 
 - Service Type: `Web Service`
 - Root Directory: `server`
-- Build Command: `npm install && npm run build`
+- Build Command: `npm install --include=dev && npm run build`
 - Start Command: `npm start`
 
 Environment Variables:
@@ -422,7 +422,7 @@ If you use Render with SQLite, attach a persistent disk. Without a persistent di
 1. In Render, create `New Web Service`.
 2. Connect the GitHub repository.
 3. Set `Root Directory` to `server`.
-4. Set `Build Command` to `npm install && npm run build`.
+4. Set `Build Command` to `npm install --include=dev && npm run build`.
 5. Set `Start Command` to `npm start`.
 6. Add environment variables:
    - `NODE_ENV=production`
