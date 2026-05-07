@@ -1,7 +1,9 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { CardBackStack } from "../components/CardBackStack";
+import { CardDetailModal } from "../components/CardDetailModal";
 import { CardView } from "../components/CardView";
+import { MobileActionSheet } from "../components/MobileActionSheet";
 import { StatusPanel } from "../components/StatusPanel";
 import { DEBUG_GAME } from "../lib/config";
 import { loadSession } from "../lib/session";
@@ -34,6 +36,19 @@ interface MagicChoiceState {
   modes: Array<{ label: string; mode: string }>;
 }
 
+interface MobileMenuAction {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  emphasis?: "primary" | "danger" | "neutral";
+}
+
+interface MobileMenuState {
+  title: string;
+  subtitle?: string;
+  actions: MobileMenuAction[];
+}
+
 export function BattlePage() {
   const { roomId = "" } = useParams();
   const session = useMemo(() => loadSession(roomId), [roomId]);
@@ -46,6 +61,10 @@ export function BattlePage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [magicChoice, setMagicChoice] = useState<MagicChoiceState | null>(null);
   const [detailCard, setDetailCard] = useState<PublicCard | null>(null);
+  const [mobileMenu, setMobileMenu] = useState<MobileMenuState | null>(null);
+  const [isMobile, setIsMobile] = useState(() => (typeof window !== "undefined" ? window.innerWidth <= 768 : false));
+  const [logExpanded, setLogExpanded] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
 
   function pushLog(line: string) {
     setLogs((current) => [`${new Date().toLocaleTimeString()} ${line}`, ...current].slice(0, MAX_LOG_LINES));
@@ -111,12 +130,33 @@ export function BattlePage() {
     }
   }, [state]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const media = window.matchMedia("(max-width: 768px)");
+    const sync = () => setIsMobile(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    setDebugOpen(!isMobile);
+  }, [isMobile]);
+
   if (!session) {
     return <Navigate to="/" replace />;
   }
 
   function sendCommand(command: ClientCommand) {
     connectionRef.current?.send(command);
+  }
+
+  function closeTransientUi() {
+    setMagicChoice(null);
+    setDetailCard(null);
+    setMobileMenu(null);
   }
 
   const waiting = !state || state.status === "waiting";
@@ -158,6 +198,60 @@ export function BattlePage() {
     }
 
     sendCommand({ type: "PLAY_CARD", instanceId: card.instanceId });
+  }
+
+  function openHandCardMenu(card: PublicCard, canPlay: boolean) {
+    setMobileMenu({
+      title: card.name,
+      subtitle: `${card.type} / cost ${card.cost} / reduced ${card.reducedCost ?? "-"}`,
+      actions: [
+        {
+          label: card.type === "magic" ? "Use" : card.type === "nexus" ? "Set" : "Play",
+          onClick: () => handlePlayCard(card),
+          disabled: !canPlay,
+          emphasis: "primary",
+        },
+        { label: "View Detail", onClick: () => setDetailCard(card) },
+      ],
+    });
+  }
+
+  function openFieldCardMenu(
+    card: PublicCard,
+    zone: "spirit" | "nexus",
+    canActNow: boolean,
+    canAttack: boolean,
+    canRemoveCore: boolean,
+    effectAction?: { label: string; onClick: () => void },
+  ) {
+    const actions: MobileMenuAction[] = [
+      { label: "View Detail", onClick: () => setDetailCard(card) },
+      { label: "Add Core", onClick: () => sendCommand({ type: "MOVE_CORE_TO_FIELD", zone, instanceId: card.instanceId }), disabled: !canActNow },
+      {
+        label: "Remove Core",
+        onClick: () => sendCommand({ type: "MOVE_CORE_TO_RESERVE", zone, instanceId: card.instanceId }),
+        disabled: !canRemoveCore,
+      },
+      {
+        label: "Trash",
+        onClick: () => sendCommand({ type: "TRASH_FIELD_CARD", zone, instanceId: card.instanceId }),
+        disabled: !canActNow,
+        emphasis: "danger",
+      },
+    ];
+
+    if (canAttack) {
+      actions.unshift({ label: "Attack", onClick: () => sendCommand({ type: "ATTACK", instanceId: card.instanceId }), emphasis: "primary" });
+    }
+    if (effectAction) {
+      actions.unshift({ label: effectAction.label, onClick: effectAction.onClick, emphasis: "primary" });
+    }
+
+    setMobileMenu({
+      title: card.name,
+      subtitle: `Lv ${card.currentLevel ?? "-"} / BP ${card.currentBp ?? "-"} / Core ${card.coreCount ?? 0}`,
+      actions,
+    });
   }
 
   const selectableTargetIds = new Set(state?.pendingEffect?.candidates.map((candidate) => candidate.instanceId) ?? []);
@@ -212,13 +306,22 @@ export function BattlePage() {
             />
           </div>
 
-          {DEBUG_GAME ? <DebugPanel state={state} playerId={session.playerId} logs={logs} /> : null}
+          {DEBUG_GAME ? (
+            <DebugPanel
+              state={state}
+              playerId={session.playerId}
+              logs={logs}
+              open={debugOpen}
+              onToggle={() => setDebugOpen((current) => !current)}
+            />
+          ) : null}
 
           <div className="battle-grid">
             <section className="opponent-area">
               <ZoneSection
                 title="相手 spirit / ultimate"
                 cards={state.opponent.spiritZone}
+                isMobile={isMobile}
                 deckCount={state.opponent.deckCount}
                 deckLabel="相手デッキ"
                 selectableIds={selectableTargetIds}
@@ -231,6 +334,7 @@ export function BattlePage() {
               <ZoneSection
                 title="相手 nexus"
                 cards={state.opponent.nexusZone}
+                isMobile={isMobile}
                 selectableIds={selectableTargetIds}
                 onCardClick={(card) =>
                   selectableTargetIds.has(card.instanceId)
@@ -238,7 +342,7 @@ export function BattlePage() {
                     : setDetailCard(card)
                 }
               />
-              <TrashSection title="相手トラッシュ" cards={state.opponent.trash} onCardClick={setDetailCard} />
+              <TrashSection title="相手トラッシュ" cards={state.opponent.trash} isMobile={isMobile} onCardClick={setDetailCard} />
             </section>
 
             <aside className="command-panel">
@@ -264,6 +368,7 @@ export function BattlePage() {
               <ZoneSection
                 title="自分 spirit / ultimate"
                 cards={state.you.spiritZone}
+                isMobile={isMobile}
                 deckCount={state.you.deckCount}
                 deckLabel="自分デッキ"
                 selectableIds={selectableTargetIds}
@@ -272,6 +377,7 @@ export function BattlePage() {
                     key={card.instanceId}
                     card={card}
                     zone="spirit"
+                    isMobile={isMobile}
                     canAct={canAct && !isFlashPhase && !state.pendingEffect}
                     currentStep={state.currentStep}
                     highlighted={selectableTargetIds.has(card.instanceId)}
@@ -280,6 +386,9 @@ export function BattlePage() {
                       selectableTargetIds.has(card.instanceId)
                         ? resolveTargetIfSelectable(state.pendingEffect, card, sendCommand)
                         : setDetailCard(card)
+                    }
+                    onOpenMenu={(options) =>
+                      openFieldCardMenu(card, "spirit", options.canManageCore, options.canAttack, options.canRemoveCore, options.effectAction)
                     }
                     onAttack={() => sendCommand({ type: "ATTACK", instanceId: card.instanceId })}
                     onAddCore={() => sendCommand({ type: "MOVE_CORE_TO_FIELD", zone: "spirit", instanceId: card.instanceId })}
@@ -291,12 +400,14 @@ export function BattlePage() {
               <ZoneSection
                 title="自分 nexus"
                 cards={state.you.nexusZone}
+                isMobile={isMobile}
                 selectableIds={selectableTargetIds}
                 renderCard={(card) => (
                   <FieldCardActions
                     key={card.instanceId}
                     card={card}
                     zone="nexus"
+                    isMobile={isMobile}
                     canAct={canAct && !isFlashPhase && !state.pendingEffect}
                     currentStep={state.currentStep}
                     highlighted={selectableTargetIds.has(card.instanceId)}
@@ -305,13 +416,16 @@ export function BattlePage() {
                         ? resolveTargetIfSelectable(state.pendingEffect, card, sendCommand)
                         : setDetailCard(card)
                     }
+                    onOpenMenu={(options) =>
+                      openFieldCardMenu(card, "nexus", options.canManageCore, false, options.canRemoveCore)
+                    }
                     onAddCore={() => sendCommand({ type: "MOVE_CORE_TO_FIELD", zone: "nexus", instanceId: card.instanceId })}
                     onRemoveCore={() => sendCommand({ type: "MOVE_CORE_TO_RESERVE", zone: "nexus", instanceId: card.instanceId })}
                     onTrash={() => sendCommand({ type: "TRASH_FIELD_CARD", zone: "nexus", instanceId: card.instanceId })}
                   />
                 )}
               />
-              <TrashSection title="自分トラッシュ" cards={state.you.trash} onCardClick={setDetailCard} />
+              <TrashSection title="自分トラッシュ" cards={state.you.trash} isMobile={isMobile} onCardClick={setDetailCard} />
             </section>
           </div>
 
@@ -327,16 +441,18 @@ export function BattlePage() {
                   <HandCardActions
                     key={card.instanceId}
                     card={card}
+                    isMobile={isMobile}
                     canPlay={canPlay && !state.pendingEffect}
                     onDetail={() => setDetailCard(card)}
                     onPlay={() => handlePlayCard(card)}
+                    onOpenMenu={() => openHandCardMenu(card, canPlay && !state.pendingEffect)}
                   />
                 );
               })}
             </div>
           </section>
 
-          <BattleLogPanel logs={state.battleLog} />
+          <BattleLogPanel logs={state.battleLog} isMobile={isMobile} expanded={logExpanded} onToggle={() => setLogExpanded((current) => !current)} />
 
           {magicChoice ? (
             <MagicChoicePrompt
@@ -382,7 +498,26 @@ export function BattlePage() {
             />
           ) : null}
 
-          {detailCard ? <CardDetailModal card={detailCard} onClose={() => setDetailCard(null)} /> : null}
+          {detailCard ? (
+            <CardDetailModal
+              card={detailCard}
+              effectText={CARD_EFFECT_TEXT[detailCard.id] ?? "This card effect text is not registered yet."}
+              onClose={() => setDetailCard(null)}
+            />
+          ) : null}
+          {mobileMenu && isMobile ? <MobileActionSheet title={mobileMenu.title} subtitle={mobileMenu.subtitle} actions={mobileMenu.actions} onClose={() => setMobileMenu(null)} /> : null}
+          {isMobile ? (
+            <MobileBottomBar
+              canAdvance={canAct && !state.pendingAttack && !isFlashPhase && !state.pendingEffect}
+              canEnd={canAct && state.currentStep === "end" && !isFlashPhase && !state.pendingEffect}
+              canPass={hasPriority && isFlashPhase && !state.pendingEffect}
+              hasOpenUi={!!magicChoice || !!detailCard || !!mobileMenu}
+              onAdvance={() => sendCommand({ type: "ADVANCE_STEP" })}
+              onEnd={() => sendCommand({ type: "END_TURN" })}
+              onPass={() => sendCommand({ type: "FLASH_PASS" })}
+              onCancel={closeTransientUi}
+            />
+          ) : null}
         </section>
       )}
     </main>
@@ -401,6 +536,7 @@ function ActionGuide({ state, playerId }: { state: ClientGameState; playerId: st
 function ZoneSection({
   title,
   cards,
+  isMobile = false,
   deckCount,
   deckLabel,
   renderCard,
@@ -409,6 +545,7 @@ function ZoneSection({
 }: {
   title: string;
   cards: PublicCard[];
+  isMobile?: boolean;
   deckCount?: number;
   deckLabel?: string;
   renderCard?: (card: PublicCard) => ReactNode;
@@ -432,6 +569,8 @@ function ZoneSection({
               compact
               highlighted={!!selectableIds?.has(card.instanceId)}
               onClick={onCardClick ? () => onCardClick(card) : undefined}
+              onInspect={onCardClick ? () => onCardClick(card) : undefined}
+              mobileFriendly={isMobile}
             />
           ),
         )}
@@ -444,10 +583,12 @@ function ZoneSection({
 function TrashSection({
   title,
   cards,
+  isMobile = false,
   onCardClick,
 }: {
   title: string;
   cards: PublicCard[];
+  isMobile?: boolean;
   onCardClick?: (card: PublicCard) => void;
 }) {
   return (
@@ -457,7 +598,14 @@ function TrashSection({
       </div>
       <div className="trash-row">
         {cards.map((card) => (
-          <CardView key={card.instanceId} card={card} compact onClick={onCardClick ? () => onCardClick(card) : undefined} />
+          <CardView
+            key={card.instanceId}
+            card={card}
+            compact
+            onClick={onCardClick ? () => onCardClick(card) : undefined}
+            onInspect={onCardClick ? () => onCardClick(card) : undefined}
+            mobileFriendly={isMobile}
+          />
         ))}
       </div>
     </section>
@@ -466,25 +614,39 @@ function TrashSection({
 
 function HandCardActions({
   card,
+  isMobile,
   canPlay,
   onDetail,
   onPlay,
+  onOpenMenu,
 }: {
   card: PublicCard;
+  isMobile: boolean;
   canPlay: boolean;
   onDetail: () => void;
   onPlay: () => void;
+  onOpenMenu: () => void;
 }) {
   return (
     <div className="field-card-shell">
-      <CardView card={card} onClick={onDetail} actionLabel="DETAIL" disabled={false} />
-      <div className="field-card-actions">
-        {canPlay ? (
-          <button type="button" className="primary" onClick={onPlay}>
-            {card.type === "magic" ? "USE" : card.type === "nexus" ? "SET" : "PLAY"}
-          </button>
-        ) : null}
-      </div>
+      <CardView
+        card={card}
+        onClick={isMobile ? onOpenMenu : onDetail}
+        onInspect={onDetail}
+        mobileFriendly={isMobile}
+        actionLabel={isMobile ? "MENU" : "DETAIL"}
+        disabled={false}
+        disableByPlayable={false}
+      />
+      {!isMobile ? (
+        <div className="field-card-actions">
+          {canPlay ? (
+            <button type="button" className="primary" onClick={onPlay}>
+              {card.type === "magic" ? "USE" : card.type === "nexus" ? "SET" : "PLAY"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -492,11 +654,13 @@ function HandCardActions({
 function FieldCardActions({
   card,
   zone,
+  isMobile,
   canAct,
   currentStep,
   highlighted,
   effectAction,
   onCardClick,
+  onOpenMenu,
   onAttack,
   onAddCore,
   onRemoveCore,
@@ -504,11 +668,18 @@ function FieldCardActions({
 }: {
   card: PublicCard;
   zone: "spirit" | "nexus";
+  isMobile: boolean;
   canAct: boolean;
   currentStep: TurnStep;
   highlighted?: boolean;
   effectAction?: { label: string; onClick: () => void };
   onCardClick: () => void;
+  onOpenMenu: (options: {
+    canAttack: boolean;
+    canManageCore: boolean;
+    canRemoveCore: boolean;
+    effectAction?: { label: string; onClick: () => void };
+  }) => void;
   onAttack?: () => void;
   onAddCore: () => void;
   onRemoveCore: () => void;
@@ -527,34 +698,48 @@ function FieldCardActions({
 
   return (
     <div className="field-card-shell">
-      <CardView card={card} compact highlighted={highlighted} onClick={onCardClick} actionLabel={highlighted ? "TARGET" : "DETAIL"} />
-      <div className="field-card-actions">
-        {canAttack ? (
-          <button type="button" className="primary" onClick={onAttack}>
-            ATTACK
-          </button>
-        ) : null}
-        {canManageCore ? (
-          <button type="button" onClick={onAddCore}>
-            +CORE
-          </button>
-        ) : null}
-        {canRemoveCore ? (
-          <button type="button" onClick={onRemoveCore}>
-            -CORE
-          </button>
-        ) : null}
-        {canManageCore ? (
-          <button type="button" onClick={onTrash}>
-            TRASH
-          </button>
-        ) : null}
-        {effectAction ? (
-          <button type="button" onClick={effectAction.onClick}>
-            {effectAction.label}
-          </button>
-        ) : null}
-      </div>
+      <CardView
+        card={card}
+        compact
+        highlighted={highlighted}
+        onClick={
+          isMobile && !highlighted
+            ? () => onOpenMenu({ canAttack, canManageCore, canRemoveCore, effectAction })
+            : onCardClick
+        }
+        onInspect={onCardClick}
+        mobileFriendly={isMobile}
+        actionLabel={highlighted ? "TARGET" : isMobile ? "MENU" : "DETAIL"}
+      />
+      {!isMobile ? (
+        <div className="field-card-actions">
+          {canAttack ? (
+            <button type="button" className="primary" onClick={onAttack}>
+              ATTACK
+            </button>
+          ) : null}
+          {canManageCore ? (
+            <button type="button" onClick={onAddCore}>
+              +CORE
+            </button>
+          ) : null}
+          {canRemoveCore ? (
+            <button type="button" onClick={onRemoveCore}>
+              -CORE
+            </button>
+          ) : null}
+          {canManageCore ? (
+            <button type="button" onClick={onTrash}>
+              TRASH
+            </button>
+          ) : null}
+          {effectAction ? (
+            <button type="button" onClick={effectAction.onClick}>
+              {effectAction.label}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -584,7 +769,7 @@ function AttackPrompt({
   const lifeDisabled = pendingAttack.mustBlock && blockableCards.length > 0;
 
   return (
-    <section className="attack-prompt">
+    <section className="attack-prompt flash-prompt">
       <div>
         <p className="eyebrow">Block Declaration</p>
         <h2>{pendingAttack.attackerCard.name} がアタック中</h2>
@@ -627,7 +812,7 @@ function FlashPrompt({
   onPass: () => void;
 }) {
   return (
-    <section className="attack-prompt">
+    <section className="attack-prompt pending-effect-prompt">
       <div>
         <p className="eyebrow">Flash</p>
         <h2>{state.flashStep === "attackFlash" ? "attackFlash" : "blockFlash"}</h2>
@@ -712,7 +897,7 @@ function MagicChoicePrompt({
   );
 }
 
-function CardDetailModal({ card, onClose }: { card: PublicCard; onClose: () => void }) {
+function LegacyCardDetailModal({ card, onClose }: { card: PublicCard; onClose: () => void }) {
   return (
     <section className="modal-backdrop" onClick={onClose}>
       <div className="card-modal" onClick={(event) => event.stopPropagation()}>
@@ -759,10 +944,27 @@ function CardDetailModal({ card, onClose }: { card: PublicCard; onClose: () => v
   );
 }
 
-function DebugPanel({ state, playerId, logs }: { state: ClientGameState; playerId: string; logs: string[] }) {
+function DebugPanel({
+  state,
+  playerId,
+  logs,
+  open,
+  onToggle,
+}: {
+  state: ClientGameState;
+  playerId: string;
+  logs: string[];
+  open: boolean;
+  onToggle: () => void;
+}) {
   return (
     <section className="debug-panel">
-      <div className="debug-grid">
+      <button type="button" className="debug-toggle" onClick={onToggle}>
+        {open ? "Hide Debug" : "Show Debug"}
+      </button>
+      {open ? (
+        <>
+          <div className="debug-grid">
         <div>
           <p className="eyebrow">Debug</p>
           <strong>roomId:</strong> {state.roomId}
@@ -796,6 +998,10 @@ function DebugPanel({ state, playerId, logs }: { state: ClientGameState; playerI
           <br />
           deck {state.you.deckCount} / hand {state.you.hand.length}
           <br />
+          symbols {formatSymbolTotals(state.you.symbolTotals)}
+          <br />
+          hand {formatDebugHand(state.you.hand)}
+          <br />
           units {formatDebugCards(state.you.spiritZone)}
         </div>
         <div>
@@ -805,13 +1011,48 @@ function DebugPanel({ state, playerId, logs }: { state: ClientGameState; playerI
           <br />
           deck {state.opponent.deckCount} / hand {state.opponent.handCount}
           <br />
+          symbols {formatSymbolTotals(state.opponent.symbolTotals)}
+          <br />
           units {formatDebugCards(state.opponent.spiritZone)}
         </div>
       </div>
-      <div className="debug-log">
+          <div className="debug-log">
         <p className="eyebrow">WebSocket Log</p>
         {logs.length === 0 ? <span>ログなし</span> : null}
         {logs.map((line, index) => (
+          <code key={`${line}-${index}`}>{line}</code>
+        ))}
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function BattleLogPanel({
+  logs,
+  isMobile,
+  expanded,
+  onToggle,
+}: {
+  logs: string[];
+  isMobile: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const visibleLogs = isMobile && !expanded ? logs.slice().reverse().slice(0, 3) : logs.slice().reverse();
+  return (
+    <section className="attack-prompt battle-log-panel">
+      <div className="panel-toggle-row">
+        <p className="eyebrow">Battle Log</p>
+        {isMobile ? (
+          <button type="button" onClick={onToggle}>
+            {expanded ? "ログを閉じる" : "ログを開く"}
+          </button>
+        ) : null}
+      </div>
+      <div className="battle-log-list">
+        {visibleLogs.map((line, index) => (
           <code key={`${line}-${index}`}>{line}</code>
         ))}
       </div>
@@ -819,16 +1060,40 @@ function DebugPanel({ state, playerId, logs }: { state: ClientGameState; playerI
   );
 }
 
-function BattleLogPanel({ logs }: { logs: string[] }) {
+function MobileBottomBar({
+  canAdvance,
+  canEnd,
+  canPass,
+  hasOpenUi,
+  onAdvance,
+  onEnd,
+  onPass,
+  onCancel,
+}: {
+  canAdvance: boolean;
+  canEnd: boolean;
+  canPass: boolean;
+  hasOpenUi: boolean;
+  onAdvance: () => void;
+  onEnd: () => void;
+  onPass: () => void;
+  onCancel: () => void;
+}) {
   return (
-    <section className="attack-prompt">
-      <p className="eyebrow">Battle Log</p>
-      <div className="battle-log-list">
-        {logs.slice().reverse().map((line, index) => (
-          <code key={`${line}-${index}`}>{line}</code>
-        ))}
-      </div>
-    </section>
+    <div className="mobile-bottom-bar">
+      <button type="button" className="primary" onClick={onAdvance} disabled={!canAdvance}>
+        次へ
+      </button>
+      <button type="button" onClick={onEnd} disabled={!canEnd}>
+        終了
+      </button>
+      <button type="button" onClick={onPass} disabled={!canPass}>
+        パス
+      </button>
+      <button type="button" onClick={onCancel} disabled={!hasOpenUi}>
+        キャンセル
+      </button>
+    </div>
   );
 }
 
@@ -957,6 +1222,20 @@ function formatDebugCards(cards: PublicCard[]) {
         `${card.name}(Lv:${card.currentLevel ?? "-"},BP:${card.currentBp ?? "-"},TEMP:${card.temporaryBpBonus ?? 0},REST:${card.isRested ? "R" : "T"})`,
     )
     .join(" / ");
+}
+
+function formatDebugHand(cards: PublicCard[]) {
+  if (cards.length === 0) {
+    return "-";
+  }
+  return cards.map((card) => `${card.name}(cost:${card.cost},reduced:${card.reducedCost ?? "-"},playable:${card.playable ? "Y" : "N"})`).join(" / ");
+}
+
+function formatSymbolTotals(symbolTotals: Record<string, number>) {
+  return Object.entries(symbolTotals)
+    .filter(([, value]) => value > 0)
+    .map(([color, value]) => `${color}:${value}`)
+    .join(" / ") || "0";
 }
 
 function formatReduction(reduction: PublicCard["reduction"]) {

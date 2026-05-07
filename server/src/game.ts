@@ -28,6 +28,7 @@ const STARTING_VOID = 30;
 const COPIES_PER_CARD = 3;
 const DEBUG_GAME = process.env.DEBUG_GAME === "true";
 const DEBUG_NO_SHUFFLE = process.env.DEBUG_NO_SHUFFLE === "true";
+const SYMBOL_COLORS = ["red", "blue", "green", "white", "yellow", "purple"] as const;
 
 const CARD_IDS = {
   AIZEN: "A-001",
@@ -305,6 +306,7 @@ export function toClientState(state: InternalGameState, viewerPlayerIndex: Playe
       hand: you.hand.map((card) => toHandCard(state, card, you)),
       spiritZone: you.spiritZone.map((card) => toPublicFieldCard(state, you, card)),
       nexusZone: you.nexusZone.map((card) => toPublicFieldCard(state, you, card)),
+      symbolTotals: countReductionSymbols(you),
       life: you.cores.lifeCores,
       deckCount: you.deck.length,
       trash: you.trash.map(toPublicCard),
@@ -315,6 +317,7 @@ export function toClientState(state: InternalGameState, viewerPlayerIndex: Playe
       handCount: opponent.hand.length,
       spiritZone: opponent.spiritZone.map((card) => toPublicFieldCard(state, opponent, card)),
       nexusZone: opponent.nexusZone.map((card) => toPublicFieldCard(state, opponent, card)),
+      symbolTotals: countReductionSymbols(opponent),
       life: opponent.cores.lifeCores,
       deckCount: opponent.deck.length,
       trash: opponent.trash.map(toPublicCard),
@@ -444,6 +447,7 @@ function startAttack(state: InternalGameState, playerIndex: PlayerIndex, instanc
 
   if (!state.pendingEffect) {
     startFlashWindow(state, "attackFlash");
+    autoPassFlashIfNoPlayableMagic(state);
   }
   return { ok: true };
 }
@@ -475,7 +479,33 @@ function resolveFlashCommand(state: InternalGameState, playerIndex: PlayerIndex,
   }
 }
 
+function applyFlashPass(state: InternalGameState, playerIndex: PlayerIndex, autoPassed: boolean) {
+  const player = state.players[playerIndex];
+  addBattleLog(state, autoPassed ? `${player.displayName} は使用可能なマジックがないため自動パス` : `${player.displayName} passed`);
+  state.passCount += 1;
+
+  if (state.passCount >= 2) {
+    const finishedStep = state.flashStep!;
+    addBattleLog(state, `${finishedStep} finished`);
+    clearFlashState(state);
+
+    if (finishedStep === "attackFlash") {
+      setMessage(state, "attackFlash finished. Choose block or life.");
+      return;
+    }
+
+    resolveCombatAfterBlockFlash(state);
+    return;
+  }
+
+  state.priorityPlayer = state.players[otherPlayer(playerIndex)].playerId;
+  setMessage(state, autoPassed ? `${player.displayName} auto passed. Priority moved.` : `${player.displayName} passed. Priority moved.`);
+}
+
 function handleFlashPass(state: InternalGameState, playerIndex: PlayerIndex): CommandResult {
+  applyFlashPass(state, playerIndex, false);
+  autoPassFlashIfNoPlayableMagic(state);
+  return { ok: true };
   const player = state.players[playerIndex];
   addBattleLog(state, `${player.displayName} がパス`);
   state.passCount += 1;
@@ -532,6 +562,10 @@ function resolvePendingAttack(
     pending.blockerInstanceId = null;
     addBattleLog(state, `${defender.displayName} がライフ受けを宣言`);
     startFlashWindow(state, "blockFlash");
+    autoPassFlashIfNoPlayableMagic(state);
+    if (!isFlashActive(state)) {
+      return { ok: true };
+    }
     setMessage(state, `${defender.displayName} がライフ受けを宣言しました。blockFlash を開始します`);
     return { ok: true };
   }
@@ -562,6 +596,10 @@ function resolvePendingAttack(
 
   if (!state.pendingEffect) {
     startFlashWindow(state, "blockFlash");
+    autoPassFlashIfNoPlayableMagic(state);
+    if (!isFlashActive(state)) {
+      return { ok: true };
+    }
     setMessage(state, `${defender.displayName} が ${blocker.name} でブロックしました。blockFlash を開始します`);
   }
   return { ok: true };
@@ -611,7 +649,7 @@ function playCardFromHand(
     ...card,
     coreCount: 1,
     attackedThisTurn: false,
-    isRested: false,
+    isRested: true,
     temporaryBpBonus: 0,
     battleOnlyBpBonus: 0,
   };
@@ -820,6 +858,10 @@ function afterPendingEffectResolution(state: InternalGameState, effect: PendingE
   const startFlash = payload.startFlashStep as FlashStep | undefined;
   if (startFlash) {
     startFlashWindow(state, startFlash);
+    autoPassFlashIfNoPlayableMagic(state);
+    if (!isFlashActive(state)) {
+      return;
+    }
     if (startFlash === "blockFlash") {
       setMessage(state, "blockFlash を開始します");
     } else {
@@ -1011,6 +1053,7 @@ function resolveDoubleDraw(state: InternalGameState, playerIndex: PlayerIndex, c
   if (candidates.length === 0) {
     addBattleLog(state, `${card.name} のフラッシュ効果対象がいなかった`);
     finishFlashAction(state, playerIndex, card.name);
+    autoPassFlashIfNoPlayableMagic(state);
     return { ok: true };
   }
 
@@ -1037,6 +1080,7 @@ function resolveShiningFlame(state: InternalGameState, playerIndex: PlayerIndex,
   if (candidates.length === 0) {
     addBattleLog(state, `${card.name} の対象がいなかった`);
     finishFlashAction(state, playerIndex, card.name);
+    autoPassFlashIfNoPlayableMagic(state);
     return { ok: true };
   }
 
@@ -1064,6 +1108,7 @@ function resolveFlameTempest(state: InternalGameState, playerIndex: PlayerIndex,
     }
     addBattleLog(state, `${card.name} で BP4000以下のスピリットをすべて破壊`);
     finishFlashAction(state, playerIndex, card.name);
+    autoPassFlashIfNoPlayableMagic(state);
     return { ok: true };
   }
 
@@ -1074,6 +1119,7 @@ function resolveFlameTempest(state: InternalGameState, playerIndex: PlayerIndex,
   if (candidates.length === 0) {
     addBattleLog(state, `${card.name} の対象がいなかった`);
     finishFlashAction(state, playerIndex, card.name);
+    autoPassFlashIfNoPlayableMagic(state);
     return { ok: true };
   }
 
@@ -1605,13 +1651,30 @@ function calculateCardPayment(state: InternalGameState, card: CardInstance | Car
   };
 }
 
-function countReductionSymbols(player: PlayerState): Record<string, number> {
-  const symbols: Record<string, number> = {};
+function countReductionSymbols(player: PlayerState): Record<(typeof SYMBOL_COLORS)[number], number> {
+  const symbols = createEmptySymbolTotals();
   for (const card of [...player.spiritZone, ...player.nexusZone]) {
+    if ((card.coreCount ?? 0) <= 0) {
+      continue;
+    }
     const color = normalizeSymbolColor(card.symbolColor);
-    symbols[color] = (symbols[color] ?? 0) + card.symbolCount;
+    if (!(color in symbols)) {
+      continue;
+    }
+    symbols[color as keyof typeof symbols] += card.symbolCount;
   }
   return symbols;
+}
+
+function createEmptySymbolTotals(): Record<(typeof SYMBOL_COLORS)[number], number> {
+  return {
+    red: 0,
+    blue: 0,
+    green: 0,
+    white: 0,
+    yellow: 0,
+    purple: 0,
+  };
 }
 
 function normalizeSymbolColor(symbolColor: string) {
@@ -1736,6 +1799,8 @@ function destroyFieldCardsWithNoCores(state: InternalGameState, ownerIndex: Play
 }
 
 function readyPlayerForTurn(player: PlayerState) {
+  player.cores.reserveCores += player.cores.trashCores;
+  player.cores.trashCores = 0;
   for (const card of player.spiritZone) {
     card.attackedThisTurn = false;
     card.isRested = true;
@@ -1764,6 +1829,43 @@ function clearTemporaryBonuses(state: InternalGameState) {
 
 function releaseFieldCardCores(cores: CoreState, card: FieldCard) {
   cores.reserveCores += card.coreCount;
+}
+
+function autoPassFlashIfNoPlayableMagic(state: InternalGameState) {
+  for (let index = 0; index < 2; index += 1) {
+    if (state.phase !== "flash" || !state.flashStep || !state.priorityPlayer || state.pendingEffect) {
+      return;
+    }
+    const priorityIndex = state.players.findIndex((player) => player.playerId === state.priorityPlayer);
+    if (priorityIndex < 0) {
+      return;
+    }
+    if (hasPlayableFlashMagic(state, priorityIndex as PlayerIndex)) {
+      return;
+    }
+    applyFlashPass(state, priorityIndex as PlayerIndex, true);
+  }
+}
+
+function hasPlayableFlashMagic(state: InternalGameState, playerIndex: PlayerIndex) {
+  const player = state.players[playerIndex];
+  if (state.phase !== "flash" || state.priorityPlayer !== player.playerId || state.pendingEffect) {
+    return false;
+  }
+  return player.hand.some((card) => {
+    if (card.type !== "magic" || !canUseMagicInFlash(card)) {
+      return false;
+    }
+    return calculateCardPayment(state, card, player).playable;
+  });
+}
+
+function canUseMagicInFlash(card: CardInstance) {
+  return card.id === CARD_IDS.DOUBLE_DRAW || card.id === CARD_IDS.SHINING_FLAME || card.id === CARD_IDS.FLAME_TEMPEST;
+}
+
+function isFlashActive(state: InternalGameState) {
+  return state.phase === "flash";
 }
 
 function moveReserveToTrash(cores: CoreState, amount: number) {

@@ -164,6 +164,7 @@ export interface PlayerVisibleState {
   hand: PublicCard[];
   spiritZone: PublicCard[];
   nexusZone: PublicCard[];
+  symbolTotals: Record<CardColor, number>;
   life: number;
   deckCount: number;
   trash: PublicCard[];
@@ -175,6 +176,7 @@ export interface OpponentVisibleState {
   handCount: number;
   spiritZone: PublicCard[];
   nexusZone: PublicCard[];
+  symbolTotals: Record<CardColor, number>;
   life: number;
   deckCount: number;
   trash: PublicCard[];

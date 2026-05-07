@@ -481,3 +481,17 @@ Frontend:
 - Render free instances may sleep.
 - SQLite data may be lost unless you mount a persistent disk and point `DB_PATH` to it.
 - Frontend `VITE_` variables are compiled into the build, so changing them requires a redeploy.
+
+## Rule Fixes Confirmed
+
+- Cost reduction now counts your own field symbols from `spiritZone`, `nexusZone`, and ultimate cards that remain in `spiritZone`.
+- Cards with `coreCount = 0` do not contribute symbols for reduction.
+- The actual payment is `reducedCost`, moved from `reserveCores` to `trashCores`.
+- At `refresh` step, all `trashCores` return to `reserveCores` and `trashCores` becomes `0`.
+- When a field card is destroyed, all cores on that card return to that controller's `reserveCores`.
+- Newly played `spirit`, `nexus`, and `ultimate` cards enter the field as `isRested = true`.
+- During flash, if the priority player has no playable magic card, the game auto-passes and writes that result to `battleLog`.
+
+## Card Data Check
+
+- Current `src/data/cards.js` includes the fields required for these rules: `cost`, `reduction`, `symbolColor`, `symbolCount`, `color`, `type`, `levels`, and `img`.
