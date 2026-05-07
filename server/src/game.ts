@@ -886,7 +886,10 @@ function handleSummonTriggeredEffects(state: InternalGameState, playerIndex: Pla
 
   if (card.id === CARD_IDS.NIGHT && level.lv <= 2 && hasOwnUltimate(player)) {
     const candidates = opponent.nexusZone.map((entry) => toEffectCandidate(state, opponent.playerId, "nexus", entry));
-    if (candidates.length > 0) {
+    if (candidates.length === 1) {
+      destroyNexusByPlayerId(state, candidates[0].playerId, candidates[0].instanceId);
+      addBattleLog(state, `${card.name} summon effect destroyed ${candidates[0].name}`);
+    } else if (candidates.length > 0) {
       createPendingEffect(state, {
         sourceInstanceId: card.instanceId,
         sourceCardName: card.name,
@@ -939,7 +942,25 @@ function handleAttackTriggeredEffects(state: InternalGameState, playerIndex: Pla
     const candidates = opponent.spiritZone
       .filter((card) => (getCurrentBp(state, opponent, card) ?? 0) <= 3000)
       .map((card) => toEffectCandidate(state, opponent.playerId, "spirit", card));
-    if (candidates.length > 0) {
+    if (candidates.length === 1) {
+      resolveAizenBattleEffect(state, {
+        id: "immediate-aizen-attack",
+        sourceInstanceId: attacker.instanceId,
+        sourceCardName: attacker.name,
+        effectName: "aizenBattleDestroy",
+        controllerId: player.playerId,
+        targetPlayerId: opponent.playerId,
+        targetType: "spirit",
+        candidates,
+        payload: {},
+      }, candidates[0]);
+      if (hasOwnUltimate(player)) {
+        drawCards(state, player, 1);
+        addBattleLog(state, `${attacker.name} battle effect drew 1 card`);
+      }
+      return { ok: true };
+    }
+    if (candidates.length > 1) {
       createPendingEffect(state, {
         sourceInstanceId: attacker.instanceId,
         sourceCardName: attacker.name,
@@ -1013,7 +1034,25 @@ function handleBlockTriggeredEffects(state: InternalGameState, playerIndex: Play
     const candidates = opponent.spiritZone
       .filter((card) => (getCurrentBp(state, opponent, card) ?? 0) <= 3000)
       .map((card) => toEffectCandidate(state, opponent.playerId, "spirit", card));
-    if (candidates.length > 0) {
+    if (candidates.length === 1) {
+      resolveAizenBattleEffect(state, {
+        id: "immediate-aizen-block",
+        sourceInstanceId: blocker.instanceId,
+        sourceCardName: blocker.name,
+        effectName: "aizenBattleDestroy",
+        controllerId: player.playerId,
+        targetPlayerId: opponent.playerId,
+        targetType: "spirit",
+        candidates,
+        payload: {},
+      }, candidates[0]);
+      if (hasOwnUltimate(player)) {
+        drawCards(state, player, 1);
+        addBattleLog(state, `${blocker.name} battle effect drew 1 card`);
+      }
+      return { ok: true };
+    }
+    if (candidates.length > 1) {
       createPendingEffect(state, {
         sourceInstanceId: blocker.instanceId,
         sourceCardName: blocker.name,
@@ -1730,15 +1769,7 @@ function destroySpiritByPlayerId(state: InternalGameState, ownerId: string, inst
   if (!owner) {
     return;
   }
-  const fieldCard = owner.spiritZone.find((entry) => entry.instanceId === instanceId);
-  if (!fieldCard) {
-    return;
-  }
-  const stripped = stripFieldCard(fieldCard);
-  destroyFieldCardByIndex(state, owner.playerIndex, "spirit", instanceId);
-  if (stripped.id === CARD_IDS.RYUMAN) {
-    triggerRyumanDestroyedEffect(state, owner.playerIndex, stripped.name);
-  }
+  destroyFieldCard(state, owner.playerIndex, "spirit", instanceId);
 }
 
 function destroyNexusByPlayerId(state: InternalGameState, ownerId: string, instanceId: string) {
@@ -1755,6 +1786,11 @@ function triggerRyumanDestroyedEffect(state: InternalGameState, ownerIndex: Play
   const candidates = opponent.spiritZone
     .filter((card) => (getCurrentBp(state, opponent, card) ?? 0) <= 4000)
     .map((card) => toEffectCandidate(state, opponent.playerId, "spirit", card));
+  if (candidates.length === 1) {
+    destroySpiritByPlayerId(state, candidates[0].playerId, candidates[0].instanceId);
+    addBattleLog(state, `${sourceName} destroyed effect destroyed ${candidates[0].name}`);
+    return;
+  }
   if (candidates.length === 0) {
     addBattleLog(state, `${sourceName} の破壊時効果対象がいなかった`);
     return;
@@ -1778,15 +1814,29 @@ function destroyFieldCardByIndex(
   zoneName: "spirit" | "nexus",
   instanceId: string,
 ) {
+  destroyFieldCard(state, ownerIndex, zoneName, instanceId);
+}
+
+function destroyFieldCard(
+  state: InternalGameState,
+  ownerIndex: PlayerIndex,
+  zoneName: "spirit" | "nexus",
+  instanceId: string,
+) {
   const owner = state.players[ownerIndex];
   const zone = getZone(owner, zoneName);
   const fieldIndex = zone.findIndex((card) => card.instanceId === instanceId);
   if (fieldIndex < 0) {
-    return;
+    return null;
   }
   const [card] = zone.splice(fieldIndex, 1);
   releaseFieldCardCores(owner.cores, card);
   owner.trash.push(stripFieldCard(card));
+  addBattleLog(state, `${card.name} was destroyed`);
+  if (zoneName === "spirit" && card.id === CARD_IDS.RYUMAN) {
+    triggerRyumanDestroyedEffect(state, ownerIndex, card.name);
+  }
+  return card;
 }
 
 function destroyFieldCardsWithNoCores(state: InternalGameState, ownerIndex: PlayerIndex) {

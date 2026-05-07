@@ -11,7 +11,7 @@
  * @property {number} symbolCount
  * @property {BspoColor|string} symbolColor
  * @property {LevelInfo[]} levels
- * @property {'spirit'|'nexus'|'magic'|'ultimate'|'arutimetto'} type
+ * @property {'spirit'|'nexus'|'magic'} type
  * @property {string} img
  */
 
@@ -39,7 +39,7 @@ export const cards = [
     cost: 0,
     reduction: { red: 0, blue: 0, green: 0, white: 0, yellow: 0, purple: 0 },
     color: 'red',
-    symbolCount: 0,
+    symbolCount: 1,
     symbolColor: 'red',
     levels: [
       { lv: 1, core: 1, bp: 1000 },
@@ -108,7 +108,7 @@ export const cards = [
       { lv: 4, core: 3, bp: 14000 },
       { lv: 5, core: 5, bp: 20000 },
     ],
-    type: 'ultimate',
+    type: 'arutimetto',
     img: '/images/ji-ku.png',
   },
   {
@@ -124,7 +124,7 @@ export const cards = [
       { lv: 4, core: 3, bp: 20000 },
       { lv: 5, core: 5, bp: 30000 },
     ],
-    type: 'ultimate',
+    type: 'arutimetto',
     img: '/images/art_j.jpeg',
   },
 
